@@ -299,6 +299,13 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
             GGML_ABORT("%s: missing test for op %s for tensor %s", __func__, ggml_op_name(op), w->name);
     }
 
+    // RPC backends always report supports_op=true, so skip the expensive
+    // alloc_buffer(0) + free_buffer round-trips over the network
+    const char * buft_name = ggml_backend_buft_name(buft);
+    if (buft_name && strncmp(buft_name, "RPC", 3) == 0) {
+        return true;
+    }
+
     // create a temporary dummy buffer for the weight so that supports_op can check the buffer type
     GGML_ASSERT(w->buffer == nullptr);
     w->buffer = ggml_backend_buft_alloc_buffer(buft, 0);

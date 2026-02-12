@@ -8171,6 +8171,13 @@ ggml_backend_dev_t llama_model::dev_output() const {
 
 template<typename F>
 static bool buft_supported(ggml_backend_buffer_type_t buft, ggml_backend_dev_t dev, F & fn) {
+    // RPC backends always report supports_op=true, so skip the expensive
+    // alloc_buffer(0) round-trips over the network
+    const char * buft_name = ggml_backend_buft_name(buft);
+    if (buft_name && strncmp(buft_name, "RPC", 3) == 0) {
+        return true;
+    }
+
     ggml_init_params params = {
         /*.mem_size   =*/ ggml_tensor_overhead()*8,
         /*.mem_buffer =*/ NULL,

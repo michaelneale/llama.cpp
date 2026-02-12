@@ -27,6 +27,11 @@ GGML_BACKEND_API void ggml_backend_rpc_get_device_memory(const char * endpoint, 
 GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                                     size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices);
 
+// Start server with a local GGUF file — tensors are loaded from disk instead of over the wire
+GGML_BACKEND_API void ggml_backend_rpc_start_server_with_gguf(const char * endpoint, const char * cache_dir,
+                                                               size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices,
+                                                               const char * gguf_path);
+
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
 

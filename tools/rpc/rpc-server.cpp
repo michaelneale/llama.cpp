@@ -175,6 +175,7 @@ struct rpc_server_params {
     bool                     use_cache   = false;
     int                      n_threads   = std::max(1U, std::thread::hardware_concurrency()/2);
     std::vector<std::string> devices;
+    std::string              gguf_path;  // local GGUF file for zero-transfer loading
 };
 
 static void print_usage(int /*argc*/, char ** argv, rpc_server_params params) {
@@ -186,6 +187,7 @@ static void print_usage(int /*argc*/, char ** argv, rpc_server_params params) {
     fprintf(stderr, "  -H, --host HOST                  host to bind to (default: %s)\n", params.host.c_str());
     fprintf(stderr, "  -p, --port PORT                  port to bind to (default: %d)\n", params.port);
     fprintf(stderr, "  -c, --cache                      enable local file cache\n");
+    fprintf(stderr, "  -m, --gguf PATH                  local GGUF model file (enables zero-transfer tensor loading)\n");
     fprintf(stderr, "\n");
 }
 
@@ -233,6 +235,11 @@ static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & 
             }
         } else if (arg == "-c" || arg == "--cache") {
             params.use_cache = true;
+        } else if (arg == "-m" || arg == "--gguf") {
+            if (++i >= argc) {
+                return false;
+            }
+            params.gguf_path = argv[i];
         } else if (arg == "-h" || arg == "--help") {
             print_usage(argc, argv, params);
             exit(0);
@@ -331,12 +338,22 @@ int main(int argc, char * argv[]) {
         return 1;
     }
 
-    auto start_server_fn = (decltype(ggml_backend_rpc_start_server)*) ggml_backend_reg_get_proc_address(reg, "ggml_backend_rpc_start_server");
-    if (!start_server_fn) {
-        fprintf(stderr, "Failed to obtain RPC backend start server function\n");
-        return 1;
-    }
+    const char * gguf_path = params.gguf_path.empty() ? nullptr : params.gguf_path.c_str();
 
-    start_server_fn(endpoint.c_str(), cache_dir, params.n_threads, devices.size(), devices.data());
+    if (gguf_path) {
+        auto start_server_fn = (decltype(ggml_backend_rpc_start_server_with_gguf)*) ggml_backend_reg_get_proc_address(reg, "ggml_backend_rpc_start_server_with_gguf");
+        if (!start_server_fn) {
+            fprintf(stderr, "Failed to obtain RPC backend start server with GGUF function\n");
+            return 1;
+        }
+        start_server_fn(endpoint.c_str(), cache_dir, params.n_threads, devices.size(), devices.data(), gguf_path);
+    } else {
+        auto start_server_fn = (decltype(ggml_backend_rpc_start_server)*) ggml_backend_reg_get_proc_address(reg, "ggml_backend_rpc_start_server");
+        if (!start_server_fn) {
+            fprintf(stderr, "Failed to obtain RPC backend start server function\n");
+            return 1;
+        }
+        start_server_fn(endpoint.c_str(), cache_dir, params.n_threads, devices.size(), devices.data());
+    }
     return 0;
 }

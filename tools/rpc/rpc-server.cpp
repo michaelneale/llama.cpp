@@ -189,6 +189,12 @@ static void print_usage(int /*argc*/, char ** argv, rpc_server_params params) {
     fprintf(stderr, "  -c, --cache                      enable local file cache\n");
     fprintf(stderr, "  -m, --gguf PATH                  local GGUF model file (enables zero-transfer tensor loading)\n");
     fprintf(stderr, "\n");
+    fprintf(stderr, "Security notice:\n");
+    fprintf(stderr, "  All connections (client-to-server and server-to-server) are unauthenticated\n");
+    fprintf(stderr, "  and unencrypted. When using multiple RPC servers, each server may establish\n");
+    fprintf(stderr, "  direct TCP connections to peer servers as directed by the client. Only run\n");
+    fprintf(stderr, "  RPC servers on trusted networks.\n");
+    fprintf(stderr, "\n");
 }
 
 static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & params) {
@@ -308,9 +314,10 @@ int main(int argc, char * argv[]) {
     if (params.host != "127.0.0.1") {
         fprintf(stderr, "\n");
         fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-        fprintf(stderr, "WARNING: Host ('%s') is != '127.0.0.1'\n", params.host.c_str());
-        fprintf(stderr, "         Never expose the RPC server to an open network!\n");
-        fprintf(stderr, "         This is an experimental feature and is not secure!\n");
+        fprintf(stderr, "WARNING: RPC server listening on %s:%d.\n", params.host.c_str(), params.port);
+        fprintf(stderr, "  Connections from clients and peer servers are unauthenticated\n");
+        fprintf(stderr, "  and unencrypted. This server may also connect to peer servers\n");
+        fprintf(stderr, "  as directed by clients. Do not expose to untrusted networks.\n");
         fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
         fprintf(stderr, "\n");
     }

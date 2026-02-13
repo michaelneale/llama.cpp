@@ -2,7 +2,8 @@
 
 > [!IMPORTANT]
 > This example and the RPC backend are currently in a proof-of-concept development stage. As such, the functionality is fragile and
-> insecure. **Never run the RPC server on an open network or in a sensitive environment!**
+> insecure. All connections — both client-to-server and server-to-server — are unauthenticated and unencrypted. Servers also make
+> outbound connections to peer servers as directed by clients. **Never run the RPC server on an open network or in a sensitive environment!**
 
 The `rpc-server` allows exposing `ggml` devices on a remote host.
 The RPC backend communicates with one or several instances of `rpc-server` and offloads computations to them.
@@ -94,6 +95,24 @@ $ bin/rpc-server -c
 ```
 
 By default, the cache is stored in the `$HOME/.cache/llama.cpp/rpc` directory and can be controlled via the `LLAMA_CACHE` environment variable.
+
+### Server-to-Server Communication
+
+When a model is split across multiple RPC servers, the client can instruct servers to transfer tensor data directly to each other, bypassing the client. This reduces latency when servers are co-located but the client is remote.
+
+**How it works:**
+- The client registers each server as a "peer" on every other server, providing the peer's `host:port` endpoint.
+- When a tensor needs to be copied between servers, the client tells the source server to push the data directly to the destination server.
+- If direct transfer fails (e.g., peer unreachable), the system falls back to relaying data through the client.
+
+**Security implications:**
+- Servers make outbound TCP connections to peer endpoints as specified by the client. A malicious client could direct a server to connect to arbitrary hosts.
+- Server-to-server connections are unauthenticated and unencrypted, same as client-to-server connections.
+- Only run RPC servers on trusted networks with trusted clients.
+
+**Requirements:**
+- All servers must be reachable from each other (not behind NAT or restrictive firewalls relative to each other).
+- All servers must run protocol version 3.7 or later. Mixed-version topologies work correctly — servers with older versions will use the fallback (client-relay) path.
 
 ### Troubleshooting
 

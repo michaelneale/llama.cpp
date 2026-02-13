@@ -7,8 +7,8 @@ extern "C" {
 #endif
 
 #define RPC_PROTO_MAJOR_VERSION    3
-#define RPC_PROTO_MINOR_VERSION    6
-#define RPC_PROTO_PATCH_VERSION    1
+#define RPC_PROTO_MINOR_VERSION    7
+#define RPC_PROTO_PATCH_VERSION    0
 
 #ifdef  __cplusplus
 static_assert(GGML_OP_COUNT == 96, "GGML_OP_COUNT has changed - update RPC_PROTO_PATCH_VERSION");

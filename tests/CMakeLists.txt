@@ -264,3 +264,21 @@ target_link_libraries(${TEST_TARGET} PRIVATE llama)
 
 llama_build_and_test(test-alloc.cpp)
 target_include_directories(test-alloc PRIVATE ${PROJECT_SOURCE_DIR}/ggml/src)
+
+# RPC peer transfer tests (only when RPC backend is enabled)
+unset(LLAMA_TEST_NAME)
+if (GGML_RPC)
+    llama_build(test-rpc-peer-transfer.cpp)
+    if (WIN32)
+        target_link_libraries(test-rpc-peer-transfer PRIVATE ws2_32)
+    endif()
+    add_test(
+        NAME test-rpc-peer-transfer
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMAND $<TARGET_FILE:test-rpc-peer-transfer>)
+    set_property(TEST test-rpc-peer-transfer PROPERTY LABELS "rpc")
+    set_property(TEST test-rpc-peer-transfer PROPERTY ENVIRONMENT
+        "RPC_SERVER_PATH=$<TARGET_FILE:rpc-server>")
+    # Ensure rpc-server is built before the test runs
+    add_dependencies(test-rpc-peer-transfer rpc-server)
+endif()

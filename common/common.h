@@ -439,6 +439,9 @@ struct common_params {
     bool    fit_params         = true; // whether to fit unset model/context parameters to free device memory
     int32_t fit_params_min_ctx = 4096; // minimum context size to set when trying to reduce memory use
 
+    // MoE expert mask: comma-separated list of allowed expert IDs (empty = all allowed)
+    std::string expert_mask_str;
+
     // margin per device in bytes for fitting parameters to free memory:
     std::vector<size_t> fit_params_target = std::vector<size_t>(llama_max_devices(), 1024 * 1024*1024);
 

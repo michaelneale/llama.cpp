@@ -489,6 +489,18 @@ public:
     const llama_memory_hybrid_iswa_context * mctx;
 };
 
+// MoE expert mask for distributed inference with masked expert groups
+class llm_graph_input_expert_mask : public llm_graph_input_i {
+public:
+    llm_graph_input_expert_mask(const llama_hparams & hp) : hp(hp) {}
+    virtual ~llm_graph_input_expert_mask() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+    bool can_reuse(const llm_graph_params & params) override;
+
+    ggml_tensor * expert_mask_tensor = nullptr; // F32 [n_expert], 0.0 or -inf
+    const llama_hparams & hp;
+};
 class llm_graph_input_sampling : public llm_graph_input_i {
 public:
     llm_graph_input_sampling(std::map<llama_seq_id, llama_sampler *> samplers) :
@@ -750,6 +762,9 @@ struct llm_graph_context {
 
     ggml_context * ctx0 = nullptr;
     ggml_cgraph  * gf   = nullptr;
+
+    // cached expert mask tensor (shared across MoE layers, created lazily)
+    mutable ggml_tensor * expert_mask_tensor = nullptr;
 
     llm_graph_context(const llm_graph_params & params);
     virtual ~llm_graph_context() = default;

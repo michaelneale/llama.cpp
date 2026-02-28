@@ -753,6 +753,22 @@ void llm_graph_input_sampling::set_input(const llama_ubatch * ubatch) {
     }
 }
 
+void llm_graph_input_expert_mask::set_input(const llama_ubatch * /*ubatch*/) {
+    if (!expert_mask_tensor) return;
+
+    const int n_expert = (int)expert_mask_tensor->ne[0];
+    std::vector<float> mask_data(n_expert, 0.0f);
+    for (int e = 0; e < n_expert; e++) {
+        mask_data[e] = hp.expert_mask[e] ? 0.0f : -INFINITY;
+    }
+    ggml_backend_tensor_set(expert_mask_tensor, mask_data.data(), 0, n_expert * sizeof(float));
+}
+
+bool llm_graph_input_expert_mask::can_reuse(const llm_graph_params & params) {
+    // mask is static, reusable if enabled state matches
+    return params.hparams.expert_mask_enabled == hp.expert_mask_enabled;
+}
+
 bool llm_graph_input_sampling::can_reuse(const llm_graph_params & params) {
     if (samplers.size() != params.samplers.size()) {
         return false;
@@ -1352,6 +1368,26 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         selection_probs = ggml_set_rows(ctx0, ggml_fill(ctx0, selection_groups, -INFINITY), selection_probs, expert_groups); // [n_exp_per_group, n_expert_groups, n_tokens]
         selection_probs = ggml_reshape_2d(ctx0, selection_probs, n_expert, n_tokens); // [n_expert, n_tokens]
         cb(selection_probs, "ffn_moe_probs_masked", il);
+    }
+
+    // apply external expert mask for distributed MoE (masked expert groups)
+    if (hparams.expert_mask_enabled) {
+        // create mask tensor lazily (shared across all MoE layers)
+        if (!expert_mask_tensor) {
+            auto inp = std::make_unique<llm_graph_input_expert_mask>(hparams);
+
+            expert_mask_tensor = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, n_expert);
+            ggml_set_name(expert_mask_tensor, "expert_mask");
+            ggml_set_input(expert_mask_tensor);
+
+            inp->expert_mask_tensor = expert_mask_tensor;
+            res->add_input(std::move(inp));
+        }
+
+        // Broadcast-add mask to selection_probs [n_expert, n_tokens]
+        ggml_tensor * emask_2d = ggml_reshape_2d(ctx0, expert_mask_tensor, n_expert, 1);
+        selection_probs = ggml_add(ctx0, selection_probs, ggml_repeat(ctx0, emask_2d, selection_probs));
+        cb(selection_probs, "ffn_moe_probs_expert_masked", il);
     }
 
     // select experts

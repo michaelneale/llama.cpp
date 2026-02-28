@@ -605,6 +605,12 @@ extern "C" {
     // Returns the total number of parameters in the model
     LLAMA_API uint64_t llama_model_n_params(const struct llama_model * model);
 
+    // Set MoE expert mask for distributed inference with masked expert groups.
+    // mask is an array of n_expert bools: true = expert allowed, false = masked out.
+    // Pass nullptr to clear the mask (all experts allowed).
+    // Returns 0 on success, -1 if n_mask doesn't match model's expert count.
+    LLAMA_API int32_t llama_model_set_expert_mask(struct llama_model * model, const bool * mask, int32_t n_mask);
+
     // Returns true if the model contains an encoder that requires llama_encode() call
     LLAMA_API bool llama_model_has_encoder(const struct llama_model * model);
 

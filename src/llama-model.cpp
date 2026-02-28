@@ -9039,6 +9039,22 @@ uint64_t llama_model_n_params(const llama_model * model) {
     return model->n_elements();
 }
 
+int32_t llama_model_set_expert_mask(llama_model * model, const bool * mask, int32_t n_mask) {
+    if (mask == nullptr) {
+        model->hparams.expert_mask_enabled = false;
+        memset(model->hparams.expert_mask, 0, sizeof(model->hparams.expert_mask));
+        return 0;
+    }
+    if ((uint32_t)n_mask != model->hparams.n_expert) {
+        return -1;
+    }
+    model->hparams.expert_mask_enabled = true;
+    for (int i = 0; i < n_mask; i++) {
+        model->hparams.expert_mask[i] = mask[i];
+    }
+    return 0;
+}
+
 bool llama_model_has_encoder(const llama_model * model) {
     switch (model->arch) {
         case LLM_ARCH_T5:        return true;

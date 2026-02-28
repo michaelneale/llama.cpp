@@ -92,6 +92,12 @@ struct llama_hparams {
     uint32_t moe_latent_size      = 0;
     uint32_t nextn_predict_layers = 0;
 
+    // MoE expert mask for distributed inference with masked expert groups.
+    // If expert_mask_enabled, only experts with mask bit set are eligible for routing.
+    // Masked-out experts get -inf selection probs before top-k.
+    bool expert_mask_enabled = false;
+    bool expert_mask[LLAMA_MAX_EXPERTS] = {}; // true = allowed. only used when expert_mask_enabled.
+
     float f_norm_eps;
     float f_norm_rms_eps;
     float f_norm_group_eps;

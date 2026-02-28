@@ -51,6 +51,8 @@ struct callback_data {
     bool collect = true;
 };
 
+static std::string export_ranking_path;  // if non-empty, export per-expert mass to this file
+
 // ---- eval callback: intercept ffn_moe_probs ----
 
 static bool moe_callback(struct ggml_tensor * t, bool ask, void * user_data) {
@@ -234,7 +236,21 @@ int main(int argc, char ** argv) {
     params.prompt = ""; // will be set per-prompt
     params.n_predict = 32;
 
-    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
+    // Pre-scan argv for our custom args and strip them before common_params_parse
+    bool all_layers = false;
+    std::vector<const char *> filtered_argv;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--export-ranking") == 0 && i + 1 < argc) {
+            export_ranking_path = argv[++i];
+        } else if (strcmp(argv[i], "--all-layers") == 0) {
+            all_layers = true;
+        } else {
+            filtered_argv.push_back(argv[i]);
+        }
+    }
+
+    int filtered_argc = (int)filtered_argv.size();
+    if (!common_params_parse(filtered_argc, const_cast<char **>(filtered_argv.data()), params, LLAMA_EXAMPLE_COMMON)) {
         return 1;
     }
 
@@ -289,6 +305,17 @@ int main(int argc, char ** argv) {
 
     cb_data.n_expert = n_expert;
     cb_data.n_expert_used = n_expert_used;
+
+    if (all_layers) {
+        cb_data.max_layers_to_log = 9999; // log all MoE layers
+        LOG_INF("Logging ALL MoE layers (--all-layers)\n");
+    }
+    if (!export_ranking_path.empty()) {
+        LOG_INF("Will export expert ranking to: %s\n", export_ranking_path.c_str());
+        if (!all_layers) {
+            LOG_INF("  NOTE: consider --all-layers for better ranking accuracy\n");
+        }
+    }
 
     // run prompts and collect routing data
     auto prompts = get_test_prompts();
@@ -404,6 +431,36 @@ int main(int argc, char ** argv) {
     std::iota(hot_experts.begin(), hot_experts.end(), 0);
     std::sort(hot_experts.begin(), hot_experts.end(),
         [&](int a, int b) { return stats.total_mass[a] > stats.total_mass[b]; });
+
+    // Export ranking if requested
+    if (!export_ranking_path.empty()) {
+        double total = 0;
+        for (int e = 0; e < n_expert; e++) total += stats.total_mass[e];
+
+        std::ofstream fout(export_ranking_path);
+        if (!fout.is_open()) {
+            LOG_ERR("Failed to open export file: %s\n", export_ranking_path.c_str());
+        } else {
+            fout << "# MoE expert ranking by gate mass\n";
+            fout << "# Model: " << params.model.path << "\n";
+            fout << "# Experts: " << n_expert << " (top-" << n_expert_used << ")\n";
+            fout << "# Prompts: " << prompts.size() << " x " << n_gen << " tokens\n";
+            fout << "# Layers logged: " << (all_layers ? "all" : std::to_string(cb_data.max_layers_to_log)) << "\n";
+            fout << "# Total token-layer observations: " << stats.total_tokens << "\n";
+            fout << "#\n";
+            fout << "# Format: expert_id,gate_mass,mass_pct,selection_count\n";
+            fout << "# Sorted by gate_mass descending (hottest first)\n";
+            for (int i = 0; i < n_expert; i++) {
+                int e = hot_experts[i];
+                fout << e << "," << stats.total_mass[e] << ","
+                     << (100.0 * stats.total_mass[e] / total) << ","
+                     << stats.selection_count[e] << "\n";
+            }
+            fout.close();
+            LOG_INF("\nExported expert ranking to: %s\n", export_ranking_path.c_str());
+            LOG_INF("Use with moe-split: --group-map <file generated from this ranking>\n\n");
+        }
+    }
 
     LOG_INF("\n=== Group Masking Analysis (best-group capture ratio) ===\n");
     LOG_INF("For each group count, what fraction of the unrestricted top-%d mass\n", n_expert_used);

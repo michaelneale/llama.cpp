@@ -4,6 +4,7 @@
 #include "ggml-impl.h"
 #include "ggml-cpu.h"
 #include "simd-mappings.h"
+#include "ggml-capture.h"
 
 #include "../../quants.h"
 #include "../../ggml-cpu-impl.h"
@@ -982,6 +983,31 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     const block_q8_0 * GGML_RESTRICT x = vx;
     const block_q8_0 * GGML_RESTRICT y = vy;
 
+    // CommitLLM: helper to capture per-block sumi from a pair of Q8_0 block arrays.
+    // Called after SIMD result is ready — re-walks blocks with scalar loop.
+    #define COMMITLLM_CAPTURE_Q8_ROWS(n_rows, row_x_arr, row_y_arr, result_arr) \
+    do { \
+        ggml_capture_hook_t _ch = NULL; void *_cu = NULL; \
+        if (ggml_capture_active(&_ch, &_cu)) { \
+            for (int _r = 0; _r < (n_rows); _r++) { \
+                int32_t _sb[256]; float _dw[256]; float _dx[256]; \
+                int32_t *_sbp = (nb<=256)?_sb:(int32_t*)malloc(nb*sizeof(int32_t)); \
+                float *_dwp = (nb<=256)?_dw:(float*)malloc(nb*sizeof(float)); \
+                float *_dxp = (nb<=256)?_dx:(float*)malloc(nb*sizeof(float)); \
+                for (int _ib=0;_ib<nb;++_ib) { \
+                    int _si=0; \
+                    for (int _j=0;_j<qk;_j++) _si+=(row_x_arr)[_r][_ib].qs[_j]*(row_y_arr)[_r][_ib].qs[_j]; \
+                    _sbp[_ib]=_si; \
+                    _dwp[_ib]=GGML_CPU_FP16_TO_FP32((row_x_arr)[_r][_ib].d); \
+                    _dxp[_ib]=GGML_CPU_FP16_TO_FP32((row_y_arr)[_r][_ib].d); \
+                } \
+                struct ggml_capture_q8_data _cap={.n_blocks=nb,.sumi=_sbp,.d_w=_dwp,.d_x=_dxp,.result=(result_arr)[_r]}; \
+                _ch(&_cap,_cu); \
+                if(nb>256){free(_sbp);free(_dwp);free(_dxp);} \
+            } \
+        } \
+    } while(0)
+
 #if defined(__ARM_FEATURE_MATMUL_INT8)
     if (nrc == 2) {
         const block_q8_0 * GGML_RESTRICT vx0 = vx;
@@ -1039,6 +1065,13 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         vst1_f32(s,      vget_low_f32 (sumv2));
         vst1_f32(s + bs, vget_high_f32(sumv2));
 
+
+        { /* CommitLLM capture for MMLA nrc==2 path */
+            const block_q8_0 * _rx[2] = { vx0, vx1 };
+            const block_q8_0 * _ry[2] = { vy0, vy1 };
+            float _res[2] = { s[0], *((float*)((char*)s + bs)) };
+            COMMITLLM_CAPTURE_Q8_ROWS(2, _rx, _ry, _res);
+        }
         return;
     }
 #endif
@@ -1209,6 +1242,46 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     }
 
     *s = sumf;
+
+    // CommitLLM capture: re-walk blocks to extract per-block sumi when active.
+    // This only runs during audit — no overhead in normal inference.
+    {
+        ggml_capture_hook_t cap_hook = NULL;
+        void * cap_ud = NULL;
+        if (ggml_capture_active(&cap_hook, &cap_ud)) {
+            int32_t  sumi_buf_stack[256];
+            float    dw_buf_stack[256];
+            float    dx_buf_stack[256];
+            int32_t *sumi_buf = (nb <= 256) ? sumi_buf_stack : (int32_t *)malloc(nb * sizeof(int32_t));
+            float   *dw_buf   = (nb <= 256) ? dw_buf_stack   : (float *)  malloc(nb * sizeof(float));
+            float   *dx_buf   = (nb <= 256) ? dx_buf_stack   : (float *)  malloc(nb * sizeof(float));
+
+            for (int ib2 = 0; ib2 < nb; ++ib2) {
+                int s2 = 0;
+                for (int j = 0; j < qk; j++) {
+                    s2 += x[ib2].qs[j] * y[ib2].qs[j];
+                }
+                sumi_buf[ib2] = s2;
+                dw_buf[ib2]   = GGML_CPU_FP16_TO_FP32(x[ib2].d);
+                dx_buf[ib2]   = GGML_CPU_FP16_TO_FP32(y[ib2].d);
+            }
+
+            struct ggml_capture_q8_data cap = {
+                .n_blocks = nb,
+                .sumi     = sumi_buf,
+                .d_w      = dw_buf,
+                .d_x      = dx_buf,
+                .result   = sumf,
+            };
+            cap_hook(&cap, cap_ud);
+
+            if (nb > 256) {
+                free(sumi_buf);
+                free(dw_buf);
+                free(dx_buf);
+            }
+        }
+    }
 }
 
 void ggml_vec_dot_tq1_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {

@@ -5,6 +5,7 @@
 #include "simd-mappings.h"
 #include "ggml-quants.h"
 #include "quants.h"
+#include "ggml-capture.h"
 
 #include "arch-fallback.h"
 
@@ -356,6 +357,25 @@ void ggml_vec_dot_q8_0_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, c
     const block_q8_0 * GGML_RESTRICT x = vx;
     const block_q8_0 * GGML_RESTRICT y = vy;
 
+    // CommitLLM capture: check if we need to record per-block sumi
+    ggml_capture_hook_t capture_hook = NULL;
+    void * capture_ud = NULL;
+    const bool capturing = ggml_capture_active(&capture_hook, &capture_ud);
+
+    // Stack-allocate capture arrays for small block counts, heap for large.
+    // Typical: Llama-8B has n=4096 → nb=128 blocks → 512 bytes each array.
+    int32_t  sumi_buf_stack[256];
+    float    dw_buf_stack[256];
+    float    dx_buf_stack[256];
+    int32_t *sumi_buf = (capturing && nb <= 256) ? sumi_buf_stack : NULL;
+    float   *dw_buf   = (capturing && nb <= 256) ? dw_buf_stack   : NULL;
+    float   *dx_buf   = (capturing && nb <= 256) ? dx_buf_stack   : NULL;
+    if (capturing && nb > 256) {
+        sumi_buf = (int32_t *)malloc(nb * sizeof(int32_t));
+        dw_buf   = (float *)  malloc(nb * sizeof(float));
+        dx_buf   = (float *)  malloc(nb * sizeof(float));
+    }
+
     int ib = 0;
     float sumf = 0;
 
@@ -366,10 +386,36 @@ void ggml_vec_dot_q8_0_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, c
             sumi += x[ib].qs[j]*y[ib].qs[j];
         }
 
-        sumf += sumi*(GGML_CPU_FP16_TO_FP32(x[ib].d)*GGML_CPU_FP16_TO_FP32(y[ib].d));
+        const float d_w = GGML_CPU_FP16_TO_FP32(x[ib].d);
+        const float d_x = GGML_CPU_FP16_TO_FP32(y[ib].d);
+        sumf += sumi * (d_w * d_x);
+
+        if (capturing) {
+            sumi_buf[ib] = sumi;
+            dw_buf[ib]   = d_w;
+            dx_buf[ib]   = d_x;
+        }
     }
 
     *s = sumf;
+
+    // Fire the capture hook with per-block data.
+    if (capturing) {
+        struct ggml_capture_q8_data cap = {
+            .n_blocks = nb,
+            .sumi     = sumi_buf,
+            .d_w      = dw_buf,
+            .d_x      = dx_buf,
+            .result   = sumf,
+        };
+        capture_hook(&cap, capture_ud);
+
+        if (nb > 256) {
+            free(sumi_buf);
+            free(dw_buf);
+            free(dx_buf);
+        }
+    }
 }
 
 void ggml_vec_dot_tq1_0_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {

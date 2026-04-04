@@ -3,6 +3,7 @@
 
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
+#include "ggml-capture.h"
 #include "traits.h"
 #include "ggml-cpu-impl.h"
 #include "ggml-impl.h"
@@ -1243,6 +1244,11 @@ void ggml_compute_forward_mul_mat(
 
     const int ith = params->ith;
     const int nth = params->nth;
+
+    // CommitLLM: increment matmul sequence number once per op (thread 0 only)
+    if (ith == 0 && ggml_capture_is_enabled()) {
+        ggml_capture_next_matmul();
+    }
 
     enum ggml_type           const vec_dot_type         = type_traits_cpu[src0->type].vec_dot_type;
     ggml_from_float_t        const from_float           = type_traits_cpu[vec_dot_type].from_float;

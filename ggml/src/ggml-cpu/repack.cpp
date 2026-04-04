@@ -6,6 +6,7 @@
 #include "ggml-impl.h"
 #include "ggml-cpu.h"
 #include "ggml-cpu-impl.h"
+#include "ggml-capture.h"
 #include "simd-mappings.h"
 #include "traits.h"
 
@@ -4259,6 +4260,11 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 
         const int ith = params->ith;
         const int nth = params->nth;
+
+        // CommitLLM: increment matmul sequence number once per op (thread 0 only)
+        if (ith == 0 && ggml_capture_is_enabled()) {
+            ggml_capture_next_matmul();
+        }
 
         GGML_ASSERT(ne0 == ne01);
         GGML_ASSERT(ne1 == ne11);

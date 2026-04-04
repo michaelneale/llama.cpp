@@ -7,7 +7,6 @@
 #include "ggml-capture.h"
 #include <stdatomic.h>
 #include <stddef.h>
-#include <stdio.h>
 
 static ggml_capture_hook_t g_capture_hook      = NULL;
 static void *              g_capture_user_data  = NULL;

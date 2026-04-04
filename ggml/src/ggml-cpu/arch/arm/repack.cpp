@@ -8,6 +8,7 @@
 #include "ggml-cpu-impl.h"
 #include "simd-mappings.h"
 #include "traits.h"
+#include "ggml-capture.h"
 
 #include <cmath>
 #include <cstring>
@@ -1741,6 +1742,34 @@ void ggml_gemv_q8_0_4x4_q8_0(int                        n,
             ret = vdotq_laneq_s32(ret, b_high.val[2], a.val[1], 2);
             ret = vdotq_laneq_s32(ret, b_high.val[3], a.val[1], 3);
 
+            // CommitLLM capture: per-block sumi for 4 columns (4x4 gemv path)
+            {
+                ggml_capture_hook_t _ch = NULL;
+                void * _cu = NULL;
+                if (ggml_capture_active(&_ch, &_cu)) {
+                    int32_t sumi_vals[4];
+                    vst1q_s32(sumi_vals, ret);
+                    float ad_f32 = GGML_CPU_FP16_TO_FP32(a_ptr->d);
+                    float bd_f32[4];
+                    for (int ci = 0; ci < 4; ci++) {
+                        bd_f32[ci] = GGML_CPU_FP16_TO_FP32(b_ptr->d[ci]);
+                    }
+                    for (int ci = 0; ci < 4; ci++) {
+                        int32_t s1 = sumi_vals[ci];
+                        float dw = bd_f32[ci];
+                        float dx = ad_f32;
+                        float res_block = (float)s1 * dw * dx;
+                        ggml_capture_q8_data cap = {};
+                        cap.n_blocks = 1;
+                        cap.sumi = &s1;
+                        cap.d_w = &dw;
+                        cap.d_x = &dx;
+                        cap.result = res_block;
+                        _ch(&cap, _cu);
+                    }
+                }
+            }
+
             acc = vfmaq_f32(acc, vcvtq_f32_s32(ret), vmulq_f32(vcvt_f32_f16(ad), vcvt_f32_f16(bd)));
             a_ptr++;
             b_ptr++;
@@ -1809,6 +1838,34 @@ void ggml_gemv_q8_0_4x8_q8_0(int                        n,
             ret1 = vdotq_s32(ret1, b_high.val[3], a3);
 
             int32x4_t ret = vpaddq_s32(ret0, ret1);
+
+            // CommitLLM capture: per-block sumi for 4 columns
+            {
+                ggml_capture_hook_t _ch = NULL;
+                void * _cu = NULL;
+                if (ggml_capture_active(&_ch, &_cu)) {
+                    int32_t sumi_vals[4];
+                    vst1q_s32(sumi_vals, ret);
+                    float ad_f32 = GGML_CPU_FP16_TO_FP32(a_ptr->d);
+                    float bd_f32[4];
+                    for (int ci = 0; ci < 4; ci++) {
+                        bd_f32[ci] = GGML_CPU_FP16_TO_FP32(b_ptr->d[ci]);
+                    }
+                    for (int ci = 0; ci < 4; ci++) {
+                        int32_t s1 = sumi_vals[ci];
+                        float dw = bd_f32[ci];
+                        float dx = ad_f32;
+                        float res_block = (float)s1 * dw * dx;
+                        ggml_capture_q8_data cap = {};
+                        cap.n_blocks = 1;
+                        cap.sumi = &s1;
+                        cap.d_w = &dw;
+                        cap.d_x = &dx;
+                        cap.result = res_block;
+                        _ch(&cap, _cu);
+                    }
+                }
+            }
 
             acc = vfmaq_f32(acc, vcvtq_f32_s32(ret), vmulq_f32(vcvt_f32_f16(ad), vcvt_f32_f16(bd)));
             a_ptr++;
@@ -4987,6 +5044,35 @@ void ggml_gemm_q8_0_4x4_q8_0(int                        n,
                     }
                 }
 
+                // CommitLLM capture: per-block sumi for 4 rows × 4 columns (4x4 gemm path)
+                {
+                    ggml_capture_hook_t _ch = NULL;
+                    void * _cu = NULL;
+                    if (ggml_capture_active(&_ch, &_cu)) {
+                        int32x4_t rows[4] = { sumi_0, sumi_1, sumi_2, sumi_3 };
+                        float a_d_f32[4], b_d_f32[4];
+                        vst1q_f32(a_d_f32, a_d);
+                        vst1q_f32(b_d_f32, b_d);
+                        for (int ri = 0; ri < 4; ri++) {
+                            int32_t sv[4];
+                            vst1q_s32(sv, rows[ri]);
+                            for (int ci = 0; ci < 4; ci++) {
+                                int32_t s1 = sv[ci];
+                                float dw = b_d_f32[ci];
+                                float dx = a_d_f32[ri];
+                                float res_block = (float)s1 * dw * dx;
+                                ggml_capture_q8_data cap = {};
+                                cap.n_blocks = 1;
+                                cap.sumi = &s1;
+                                cap.d_w = &dw;
+                                cap.d_x = &dx;
+                                cap.result = res_block;
+                                _ch(&cap, _cu);
+                            }
+                        }
+                    }
+                }
+
                 sumf[0] = vmlaq_f32(sumf[0], vmulq_laneq_f32(b_d, a_d, 0), vcvtq_f32_s32(sumi_0));
                 sumf[1] = vmlaq_f32(sumf[1], vmulq_laneq_f32(b_d, a_d, 1), vcvtq_f32_s32(sumi_1));
                 sumf[2] = vmlaq_f32(sumf[2], vmulq_laneq_f32(b_d, a_d, 2), vcvtq_f32_s32(sumi_2));
@@ -5070,6 +5156,36 @@ void ggml_gemm_q8_0_4x8_q8_0(int                        n,
                 // Scales
                 float32x4_t a_d = vcvt_f32_f16(vld1_f16((const __fp16 *) a_ptr->d));
                 float32x4_t b_d = vcvt_f32_f16(vld1_f16((const __fp16 *) b_ptr->d));
+
+                // CommitLLM capture: per-block sumi for 4 rows × 4 columns
+                {
+                    ggml_capture_hook_t _ch = NULL;
+                    void * _cu = NULL;
+                    if (ggml_capture_active(&_ch, &_cu)) {
+                        int32x4_t rows[4] = { row0, row1, row2, row3 };
+                        float a_d_f32[4], b_d_f32[4];
+                        vst1q_f32(a_d_f32, a_d);
+                        vst1q_f32(b_d_f32, b_d);
+
+                        for (int ri = 0; ri < 4; ri++) {
+                            int32_t sumi_vals[4];
+                            vst1q_s32(sumi_vals, rows[ri]);
+                            for (int ci = 0; ci < 4; ci++) {
+                                int32_t s1 = sumi_vals[ci];
+                                float dw = b_d_f32[ci];
+                                float dx = a_d_f32[ri];
+                                float res_block = (float)s1 * dw * dx;
+                                ggml_capture_q8_data cap = {};
+                                cap.n_blocks = 1;
+                                cap.sumi = &s1;
+                                cap.d_w = &dw;
+                                cap.d_x = &dx;
+                                cap.result = res_block;
+                                _ch(&cap, _cu);
+                            }
+                        }
+                    }
+                }
 
                 acc_f32[0] = vfmaq_f32(acc_f32[0], vcvtq_f32_s32(row0), vmulq_laneq_f32(b_d, a_d, 0));
                 acc_f32[1] = vfmaq_f32(acc_f32[1], vcvtq_f32_s32(row1), vmulq_laneq_f32(b_d, a_d, 1));

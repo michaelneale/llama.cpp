@@ -215,9 +215,14 @@ static bool is_expert_tensor(const char * name) {
         || strstr(name, "ffn_down_exps") != nullptr;
 }
 
-// Check if tensor is the MoE router gate
+// Check if tensor is a shared-expert tensor (trunk, not sliced)
+static bool is_shared_expert(const char * name) {
+    return strstr(name, "_shexp") != nullptr;
+}
+
+// Check if tensor is the MoE router gate (but not the shared-expert gate)
 static bool is_router_gate(const char * name) {
-    return strstr(name, "ffn_gate_inp") != nullptr;
+    return strstr(name, "ffn_gate_inp") != nullptr && !is_shared_expert(name);
 }
 
 static void zeros(std::ofstream & f, size_t n) {

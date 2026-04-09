@@ -1,5 +1,6 @@
 #include "server-context.h"
 #include "server-http.h"
+#include "server-commitllm.h"
 #include "server-models.h"
 #include "server-cors-proxy.h"
 
@@ -211,6 +212,11 @@ int main(int argc, char ** argv) {
         ctx_http.get ("/cors-proxy",      ex_wrapper(proxy_handler_get));
         ctx_http.post("/cors-proxy",      ex_wrapper(proxy_handler_post));
     }
+
+    // CommitLLM: install capture hook and register challenge endpoints
+    static commitllm_challenge_state commitllm_state;
+    commitllm_state.install();
+    commitllm_register_routes(ctx_http, commitllm_state);
 
     //
     // Start the server
